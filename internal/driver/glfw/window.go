@@ -157,6 +157,7 @@ func (w *window) doShow() {
 		if w.centered {
 			w.doCenterOnScreen() // lastly center if that was requested
 		}
+		w.doPosition()
 		w.view().Show()
 
 		// save coordinates

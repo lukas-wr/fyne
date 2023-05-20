@@ -140,6 +140,27 @@ func (w *window) CenterOnScreen() {
 	}
 }
 
+func (w *window) SetPosition(x, y int) {
+	w.centered = false
+	w.xpos = x
+	w.ypos = y
+
+	if w.view() != nil {
+		runOnMain(w.doPosition)
+	}
+}
+
+func (w *window) doPosition() {
+	w.viewport.SetPos(w.xpos, w.ypos)
+}
+
+func (w *window) GetPosition() (x, y int) {
+	if w.view() != nil {
+		return w.view().GetPos()
+	}
+	return 0, 0
+}
+
 func (w *window) doCenterOnScreen() {
 	viewWidth, viewHeight := w.screenSize(w.canvas.size)
 	if w.width > viewWidth { // in case our window has not called back to canvas size yet
