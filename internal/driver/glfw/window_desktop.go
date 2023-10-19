@@ -14,10 +14,12 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/internal"
 	"fyne.io/fyne/v2/internal/driver/common"
 	"fyne.io/fyne/v2/internal/painter"
 	"fyne.io/fyne/v2/internal/painter/gl"
+	"fyne.io/fyne/v2/internal/scale"
+	"fyne.io/fyne/v2/internal/svg"
+	"fyne.io/fyne/v2/storage"
 
 	"github.com/go-gl/glfw/v3.3/glfw"
 )
@@ -161,6 +163,23 @@ func (w *window) GetPosition() (x, y int) {
 	return 0, 0
 }
 
+func (w *window) SetOnDropped(dropped func(pos fyne.Position, items []fyne.URI)) {
+	w.runOnMainWhenCreated(func() {
+		w.viewport.SetDropCallback(func(win *glfw.Window, names []string) {
+			if dropped == nil {
+				return
+			}
+
+			uris := make([]fyne.URI, len(names))
+			for i, name := range names {
+				uris[i] = storage.NewFileURI(name)
+			}
+
+			dropped(w.mousePos, uris)
+		})
+	})
+}
+
 func (w *window) doCenterOnScreen() {
 	viewWidth, viewHeight := w.screenSize(w.canvas.size)
 	if w.width > viewWidth { // in case our window has not called back to canvas size yet
@@ -210,7 +229,7 @@ func (w *window) SetIcon(icon fyne.Resource) {
 		}
 
 		var img image.Image
-		if painter.IsResourceSVG(w.icon) {
+		if svg.IsResourceSVG(w.icon) {
 			img = painter.PaintImage(&canvas.Image{Resource: w.icon}, nil, windowIconSize, windowIconSize)
 		} else {
 			pix, _, err := image.Decode(bytes.NewReader(w.icon.Content()))
@@ -621,6 +640,7 @@ func convertASCII(key glfw.Key) fyne.KeyName {
 func (w *window) keyPressed(_ *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
 	keyName := keyToName(key, scancode)
 	keyDesktopModifier := desktopModifier(mods)
+	w.driver.currentKeyModifiers = desktopModifierCorrected(mods, key, action)
 	keyAction := convertAction(action)
 	keyASCII := convertASCII(key)
 
@@ -640,6 +660,32 @@ func desktopModifier(mods glfw.ModifierKey) fyne.KeyModifier {
 	}
 	if (mods & glfw.ModSuper) != 0 {
 		m |= fyne.KeyModifierSuper
+	}
+	return m
+}
+
+func desktopModifierCorrected(mods glfw.ModifierKey, key glfw.Key, action glfw.Action) fyne.KeyModifier {
+	// On X11, pressing/releasing modifier keys does not include newly pressed/released keys in 'mod' mask.
+	// https://github.com/glfw/glfw/issues/1630
+	if action == glfw.Press {
+		mods |= glfwKeyToModifier(key)
+	} else {
+		mods &= ^glfwKeyToModifier(key)
+	}
+	return desktopModifier(mods)
+}
+
+func glfwKeyToModifier(key glfw.Key) glfw.ModifierKey {
+	var m glfw.ModifierKey
+	switch key {
+	case glfw.KeyLeftControl, glfw.KeyRightControl:
+		m = glfw.ModControl
+	case glfw.KeyLeftAlt, glfw.KeyRightAlt:
+		m = glfw.ModAlt
+	case glfw.KeyLeftShift, glfw.KeyRightShift:
+		m = glfw.ModShift
+	case glfw.KeyLeftSuper, glfw.KeyRightSuper:
+		m = glfw.ModSuper
 	}
 	return m
 }
@@ -669,8 +715,8 @@ func (w *window) rescaleOnMain() {
 	if w.fullScreen {
 		w.width, w.height = w.viewport.GetSize()
 		scaledFull := fyne.NewSize(
-			internal.UnscaleInt(w.canvas, w.width),
-			internal.UnscaleInt(w.canvas, w.height))
+			scale.ToFyneCoordinate(w.canvas, w.width),
+			scale.ToFyneCoordinate(w.canvas, w.height))
 		w.canvas.Resize(scaledFull)
 		return
 	}
@@ -758,7 +804,7 @@ func (w *window) create() {
 
 		if w.FixedSize() && (w.requestedWidth == 0 || w.requestedHeight == 0) {
 			bigEnough := w.canvas.canvasSize(w.canvas.Content().MinSize())
-			w.width, w.height = internal.ScaleInt(w.canvas, bigEnough.Width), internal.ScaleInt(w.canvas, bigEnough.Height)
+			w.width, w.height = scale.ToScreenCoordinate(w.canvas, bigEnough.Width), scale.ToScreenCoordinate(w.canvas, bigEnough.Height)
 			w.shouldWidth, w.shouldHeight = w.width, w.height
 		}
 
